@@ -47,15 +47,29 @@ setp_names, setp_types = conf.get_recipe("setp")
 watchdog_names, watchdog_types = conf.get_recipe("watchdog")
 
 con = rtde.RTDE(ROBOT_HOST, ROBOT_PORT)
+
+# Increase connection timeout to avoid timeout errors
 con.connect()
 
-# get controller version
-con.get_controller_version()
+try:
+    # get controller version
+    con.get_controller_version()
 
-# setup recipes
-con.send_output_setup(state_names, state_types)
-setp = con.send_input_setup(setp_names, setp_types)
-watchdog = con.send_input_setup(watchdog_names, watchdog_types)
+    # setup recipes
+    con.send_output_setup(state_names, state_types)
+    setp = con.send_input_setup(setp_names, setp_types)
+    watchdog = con.send_input_setup(watchdog_names, watchdog_types)
+except Exception as e:
+    print(f"Error during setup: {e}")
+    print("Attempting to disconnect and reconnect...")
+    con.disconnect()
+    import time
+    time.sleep(1)
+    con.connect()
+    con.get_controller_version()
+    con.send_output_setup(state_names, state_types)
+    setp = con.send_input_setup(setp_names, setp_types)
+    watchdog = con.send_input_setup(watchdog_names, watchdog_types)
 
 # Setpoints to move the robot to
 setp1 = [-0.12, -0.43, 0.14, 0, 3.11, 0.04]
@@ -89,32 +103,35 @@ def list_to_setp(sp, list):
 if not con.send_start():
     sys.exit()
 
-# control loop
-move_completed = True
-while keep_running:
-    # receive the current state
-    state = con.receive()
+try:
+    # control loop
+    move_completed = True
+    while keep_running:
+        # receive the current state
+        state = con.receive()
 
-    if state is None:
-        break
+        if state is None:
+            break
 
-    # do something...
-    if move_completed and state.output_int_register_0 == 1:
-        move_completed = False
-        new_setp = setp1 if setp_to_list(setp) == setp2 else setp2
-        list_to_setp(setp, new_setp)
-        print("New pose = " + str(new_setp))
-        # send new setpoint
-        con.send(setp)
-        watchdog.input_int_register_0 = 1
-    elif not move_completed and state.output_int_register_0 == 0:
-        print("Move to confirmed pose = " + str(state.target_q))
-        move_completed = True
-        watchdog.input_int_register_0 = 0
+        # do something...
+        if move_completed and state.output_int_register_0 == 1:
+            move_completed = False
+            new_setp = setp1 if setp_to_list(setp) == setp2 else setp2
+            list_to_setp(setp, new_setp)
+            print("New pose = " + str(new_setp))
+            # send new setpoint
+            con.send(setp)
+            watchdog.input_int_register_0 = 1
+        elif not move_completed and state.output_int_register_0 == 0:
+            print("Move to confirmed pose = " + str(state.target_q))
+            move_completed = True
+            watchdog.input_int_register_0 = 0
 
-    # kick watchdog
-    con.send(watchdog)
-
-con.send_pause()
-
-con.disconnect()
+        # kick watchdog
+        con.send(watchdog)
+except KeyboardInterrupt:
+    print("\nProgram interrupted by user")
+finally:
+    con.send_pause()
+    con.disconnect()
+    print("Connection closed properly")
