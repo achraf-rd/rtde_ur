@@ -174,20 +174,46 @@ def run_safe_robot_test():
         version = con.get_controller_version()
         print(f"✓ Controller version: {version}")
         
-        # Setup recipes with retry mechanism
-        try:
-            con.send_output_setup(state_names, state_types)
-            setp = con.send_input_setup(setp_names, setp_types)
-            print("✓ RTDE interface configured")
-        except Exception as e:
-            print(f"Setup error: {e}")
-            print("Attempting recovery...")
-            con.disconnect()
-            time.sleep(1)
-            con.connect()
-            con.send_output_setup(state_names, state_types)
-            setp = con.send_input_setup(setp_names, setp_types)
-            print("✓ RTDE interface configured (after recovery)")
+        # Setup recipes with retry mechanism for "already in use" error
+        max_retries = 3
+        retry_count = 0
+        setp = None
+        
+        while retry_count < max_retries:
+            try:
+                con.send_output_setup(state_names, state_types)
+                setp = con.send_input_setup(setp_names, setp_types)
+                print("✓ RTDE interface configured")
+                break  # Success, exit retry loop
+                
+            except ValueError as e:
+                if "already in use" in str(e):
+                    retry_count += 1
+                    print(f"⚠ Input registers are in use (attempt {retry_count}/{max_retries})")
+                    print("  Disconnecting to clear registers...")
+                    con.disconnect()
+                    time.sleep(2)  # Wait for robot to release registers
+                    
+                    if retry_count < max_retries:
+                        print("  Reconnecting...")
+                        con.connect()
+                        version = con.get_controller_version()
+                    else:
+                        print("\n❌ Failed to configure RTDE after multiple attempts")
+                        print("\nTROUBLESHOOTING:")
+                        print("  1. Restart the robot controller")
+                        print("  2. Wait 10 seconds and try again")
+                        print("  3. Check if another RTDE client is connected")
+                        return
+                else:
+                    raise  # Re-raise if it's a different error
+            except Exception as e:
+                print(f"❌ Setup error: {e}")
+                raise
+        
+        if setp is None:
+            print("❌ Failed to setup RTDE interface")
+            return
         
         # Start data synchronization
         if not con.send_start():
